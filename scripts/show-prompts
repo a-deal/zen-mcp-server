@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""
+show-prompts - Display reusable Claude prompts from PROMPTS.md
+
+Usage:
+    show-prompts --list              List all categories and prompts
+    show-prompts <prompt-name>       Show a specific prompt
+    show-prompts --help              Show this help message
+"""
+
+import os
+import sys
+import re
+from pathlib import Path
+
+
+class PromptReader:
+    def __init__(self, prompts_file="PROMPTS.md"):
+        # Look for PROMPTS.md in ~/src/scripts/
+        self.prompts_file = Path.home() / "src" / "scripts" / prompts_file
+        
+        # Fallback to other locations if not found
+        if not self.prompts_file.exists():
+            script_path = Path(__file__).resolve()
+            possible_locations = [
+                script_path.parent / prompts_file,
+                script_path.parent.parent / prompts_file,
+                Path.home() / "src" / "zen-mcp-server" / prompts_file,
+            ]
+            for location in possible_locations:
+                if location.exists():
+                    self.prompts_file = location
+                    break
+        
+        self.prompts = {}
+        self.categories = {}
+        self._parse_prompts()
+    
+    def _parse_prompts(self):
+        """Parse PROMPTS.md and extract categories and prompts."""
+        if not self.prompts_file.exists():
+            print(f"Error: {self.prompts_file} not found", file=sys.stderr)
+            sys.exit(1)
+        
+        with open(self.prompts_file, 'r') as f:
+            content = f.read()
+        
+        # Find all categories (## headings)
+        category_pattern = r'^## (.+?)$'
+        prompt_pattern = r'^### (.+?)$'
+        
+        lines = content.split('\n')
+        current_category = None
+        current_prompt = None
+        in_code_block = False
+        prompt_content = []
+        
+        for i, line in enumerate(lines):
+            # Check for category
+            category_match = re.match(category_pattern, line)
+            if category_match:
+                # Save previous prompt if exists
+                if current_prompt and prompt_content:
+                    prompt_key = self._to_kebab_case(current_prompt)
+                    self.prompts[prompt_key] = '\n'.join(prompt_content).strip()
+                    prompt_content = []
+                
+                current_category = category_match.group(1)
+                if current_category not in ["Usage Examples", "Tips for Using These Prompts", "Contributing New Prompts"]:
+                    self.categories[current_category] = []
+                current_prompt = None
+                continue
+            
+            # Check for prompt heading
+            prompt_match = re.match(prompt_pattern, line)
+            if prompt_match and current_category and current_category in self.categories:
+                # Save previous prompt if exists
+                if current_prompt and prompt_content:
+                    prompt_key = self._to_kebab_case(current_prompt)
+                    self.prompts[prompt_key] = '\n'.join(prompt_content).strip()
+                    prompt_content = []
+                
+                current_prompt = prompt_match.group(1)
+                self.categories[current_category].append(current_prompt)
+                in_code_block = False
+                continue
+            
+            # Collect prompt content
+            if current_prompt:
+                # Check for code block markers
+                if line.strip() == '```':
+                    if not in_code_block:
+                        in_code_block = True
+                        continue
+                    else:
+                        in_code_block = False
+                        # Save this prompt
+                        prompt_key = self._to_kebab_case(current_prompt)
+                        self.prompts[prompt_key] = '\n'.join(prompt_content).strip()
+                        prompt_content = []
+                        current_prompt = None
+                        continue
+                
+                # Collect content inside code blocks
+                if in_code_block:
+                    prompt_content.append(line)
+    
+    def _to_kebab_case(self, text):
+        """Convert text to kebab-case (hyphenated lowercase)."""
+        # Remove special characters and convert to lowercase
+        text = re.sub(r'[^\w\s-]', '', text)
+        text = re.sub(r'[-\s]+', '-', text)
+        return text.lower().strip('-')
+    
+    def list_prompts(self):
+        """Display all categories and their prompts."""
+        print("Available prompts:\n")
+        for category, prompts in self.categories.items():
+            print(f"\033[1m{category}\033[0m")  # Bold category
+            for prompt in prompts:
+                kebab_prompt = self._to_kebab_case(prompt)
+                print(f"  {kebab_prompt}")
+            print()
+    
+    def show_prompt(self, prompt_name):
+        """Display a specific prompt."""
+        if prompt_name in self.prompts:
+            print(self.prompts[prompt_name])
+        else:
+            print(f"Error: Prompt '{prompt_name}' not found", file=sys.stderr)
+            print("\nUse 'show-prompts --list' to see available prompts", file=sys.stderr)
+            sys.exit(1)
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__)
+        sys.exit(1)
+    
+    reader = PromptReader()
+    
+    if sys.argv[1] == "--help" or sys.argv[1] == "-h":
+        print(__doc__)
+        sys.exit(0)
+    elif sys.argv[1] == "--list":
+        reader.list_prompts()
+    else:
+        prompt_name = sys.argv[1]
+        reader.show_prompt(prompt_name)
+
+
+if __name__ == "__main__":
+    main()
